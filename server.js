@@ -10,50 +10,38 @@ app.use(express.json());
 app.use(cors());
 
 // Initialize Firebase Admin
-const serviceAccount = require("./firebase-adminsdk.json");  // Make sure this exists on Render!
+const serviceAccount = require("./firebase-adminsdk.json");  // Make sure this is correctly deployed to your Render instance
 admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
 });
 
-const VK_APP_ID = process.env.VK_APP_ID;
-const VK_SERVICE_TOKEN = process.env.VK_SERVICE_TOKEN;
+const VK_APP_ID = process.env.VK_APP_ID;              // from your VK app settings
+const VK_SERVICE_TOKEN = process.env.VK_SERVICE_TOKEN;  // from your VK app settings
 
-// 🔥 Helper function to log incoming env variables (good for debugging on Render)
-console.log(`VK_APP_ID: ${VK_APP_ID}`);
-console.log(`VK_SERVICE_TOKEN: ${VK_SERVICE_TOKEN ? 'Exists' : 'Missing!'}`);
-
-// VKID Auth Endpoint
 app.post("/auth/vk", async (req, res) => {
     const { code, device_id } = req.body;
 
-    console.log("Incoming VKID login request:");
-    console.log(`Code: ${code}`);
-    console.log(`Device ID: ${device_id}`);
-
     try {
+        // Step 1 - Exchange code for VKID user data using VK API
         const vkResponse = await axios.post('https://api.vk.com/method/vkid.auth.exchangeCode', null, {
             params: {
                 app_id: VK_APP_ID,
                 code: code,
                 device_id: device_id,
-                v: '5.131',
+                v: '5.131',  // VK API version
                 access_token: VK_SERVICE_TOKEN,
             },
         });
 
-        // Log full VK response for debugging
-        console.log("VKID exchangeCode response:");
-        console.log(JSON.stringify(vkResponse.data, null, 2));
-
-        if (!vkResponse.data.response) {
-            throw new Error("VK response missing 'response' field - unexpected response format.");
-        }
-
         const vkData = vkResponse.data.response;
 
-        // Some VK responses use response.user, some put user data directly in response
+        // Log for debugging purposes — see the full VK response in Render logs
+        console.log("VK Response Data:", JSON.stringify(vkResponse.data, null, 2));
+
+        // Step 2 - Support both formats (sometimes VKID returns `user`, sometimes it's top-level)
         const vkUser = vkData.user || vkData;
 
+        // Step 3 - Create user in Firestore (or update if they already exist)
         const uid = `vk_${vkUser.id}`;
         const userDoc = admin.firestore().collection("users").doc(uid);
 
@@ -66,18 +54,18 @@ app.post("/auth/vk", async (req, res) => {
             isAdmin: false,
         };
 
-        // Check if user already exists in Firestore
         const doc = await userDoc.get();
         if (!doc.exists) {
             await userDoc.set(userData);
         } else {
+            // Optionally update nickname and social link if user changed name
             await userDoc.update({
                 nickname: userData.nickname,
                 socialLink: userData.socialLink,
             });
         }
 
-        // Create Firebase Custom Token
+        // Step 4 - Create Firebase Custom Token
         const firebaseToken = await admin.auth().createCustomToken(uid, {
             email: userData.email,
             displayName: userData.nickname,
@@ -85,18 +73,15 @@ app.post("/auth/vk", async (req, res) => {
             provider: "vk",
         });
 
+        // Step 5 - Send the custom token back to Flutter
         res.json({ firebaseToken });
+
     } catch (error) {
-        console.error("VKID exchange failed:");
-        if (error.response) {
-            console.error("VK Error Response:", JSON.stringify(error.response.data, null, 2));
-        } else {
-            console.error("Error Message:", error.message);
-        }
+        console.error("VKID exchange failed:", error.response?.data || error.message);
         res.status(500).json({ error: "Failed to authenticate with VKID" });
     }
 });
 
-// Start the server
+// Start server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
