@@ -31,7 +31,7 @@ app.post("/auth/vk", async (req, res) => {
     console.log(`Device ID: ${device_id}`);
 
     try {
-        const vkResponse = await axios.post('https://api.vk.com/method/vkid.auth.exchangeCode', null, {
+        const vkResponse = await axios.post('https://api.vk.com/method/auth.exchangeCode', null, {
             params: {
                 app_id: VK_APP_ID,
                 code: code,
