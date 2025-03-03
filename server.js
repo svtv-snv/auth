@@ -9,14 +9,14 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Initialize Firebase Admin SDK (Make sure you have firebase-adminsdk.json correctly deployed in Render)
+// Initialize Firebase Admin SDK
 const serviceAccount = require("./firebase-adminsdk.json");
 
 admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
 });
 
-// Load environment variables
+// Environment variables
 const VK_APP_ID = process.env.VK_APP_ID;
 const VK_SERVICE_TOKEN = process.env.VK_SERVICE_TOKEN;
 
@@ -25,49 +25,45 @@ if (!VK_APP_ID || !VK_SERVICE_TOKEN) {
     process.exit(1);
 }
 
-// Log startup info (helps on Render logs)
 console.log(`✅ VKID Backend Service Starting...`);
 console.log(`✅ VK_APP_ID: ${VK_APP_ID}`);
 console.log(`✅ VK_SERVICE_TOKEN is present: ${!!VK_SERVICE_TOKEN}`);
 
 app.post("/auth/vk", async (req, res) => {
-    const { code, device_id } = req.body;
+    const { userToken } = req.body;
+
+    if (!userToken) {
+        return res.status(400).json({ error: "Missing userToken in request body" });
+    }
 
     console.log("📥 Incoming VKID Login Request");
-    console.log(`Code: ${code}`);
-    console.log(`Device ID: ${device_id}`);
+    console.log(`🔑 userToken: ${userToken}`);
 
     try {
-        // Make VKID exchangeCode call
-        const vkResponse = await axios.post('https://api.vk.com/method/vkid.auth.exchangeCode', null, {
+        // Validate token directly with VK
+        const vkResponse = await axios.post("https://api.vk.com/method/vkid.auth.validateToken", null, {
             params: {
-                app_id: VK_APP_ID,
-                code: code,
-                device_id: device_id,
-                v: '5.131',
+                token: userToken,
                 access_token: VK_SERVICE_TOKEN,
-            },
+                v: "5.199"
+            }
         });
 
-        // Log full response for debugging
-        console.log("🔔 VKID exchangeCode Response:", JSON.stringify(vkResponse.data, null, 2));
+        console.log("🔔 VKID validateToken Response:", JSON.stringify(vkResponse.data, null, 2));
 
-        // Check for VK error
         if (vkResponse.data.error) {
             console.error("❌ VKID Error Response:", JSON.stringify(vkResponse.data.error, null, 2));
             return res.status(400).json({ error: vkResponse.data.error });
         }
 
-        // Extract user data
-        const vkData = vkResponse.data.response;
-        const vkUser = vkData.user || vkData;  // Some responses have user nested, some don't
+        const vkUser = vkResponse.data.response?.user;
 
-        if (!vkUser.id) {
-            console.error("❌ VKID response does not contain user id");
+        if (!vkUser || !vkUser.id) {
+            console.error("❌ VKID response missing user data");
             return res.status(500).json({ error: "Invalid VK response structure" });
         }
 
-        // Create UID and user data for Firestore
+        // Prepare Firestore document
         const uid = `vk_${vkUser.id}`;
         const userDoc = admin.firestore().collection("users").doc(uid);
 
@@ -77,33 +73,33 @@ app.post("/auth/vk", async (req, res) => {
             nickname: `${vkUser.first_name || ''} ${vkUser.last_name || ''}`.trim(),
             socialLink: `https://vk.com/id${vkUser.id}`,
             isVerified: true,
-            isAdmin: false,
+            isAdmin: false
         };
 
-        // Check if user exists, create or update
+        // Set or update user data in Firestore
         const doc = await userDoc.get();
         if (!doc.exists) {
             await userDoc.set(userData);
         } else {
             await userDoc.update({
                 nickname: userData.nickname,
-                socialLink: userData.socialLink,
+                socialLink: userData.socialLink
             });
         }
 
-        // Create Firebase custom token
+        // Create Firebase Custom Token
         const firebaseToken = await admin.auth().createCustomToken(uid, {
             email: userData.email,
             displayName: userData.nickname,
             photoURL: vkUser.photo,
-            provider: "vk",
+            provider: "vk"
         });
 
-        // Return the Firebase custom token to Flutter
+        // Respond with Firebase Custom Token
         res.json({ firebaseToken });
 
     } catch (error) {
-        console.error("❌ VKID exchange failed");
+        console.error("❌ VKID validation failed");
         if (error.response) {
             console.error("❌ VK API Error Response:", JSON.stringify(error.response.data, null, 2));
         } else {
@@ -113,6 +109,5 @@ app.post("/auth/vk", async (req, res) => {
     }
 });
 
-// Start server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 VKID Auth Backend running on port ${PORT}`));
