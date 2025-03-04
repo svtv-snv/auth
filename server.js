@@ -7,57 +7,65 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const serviceAccount = require('./firebase-adminsdk.json');
+const serviceAccount = require('./firebase-adminsdk.json');  // подключи свой Firebase service account
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 
-const VK_APP_ID = '53184888';
-const VK_SECURE_KEY = process.env.VK_SECURE_KEY; // засунь в env
-const VK_REDIRECT_URI = 'https://svtv.app/auth/vk';
+const VK_APP_ID = process.env.VK_APP_ID;        // 53184888
+const VK_CLIENT_SECRET = process.env.VK_CLIENT_SECRET;  // из настроек приложения VKID
+const VK_REDIRECT_URI = 'https://svtv.app/auth/vk';   // это 100% должно совпадать с тем, что в VK
+
+if (!VK_APP_ID || !VK_CLIENT_SECRET) {
+    console.error('❌ Missing VK_APP_ID or VK_CLIENT_SECRET in env');
+    process.exit(1);
+}
 
 app.post('/auth/vk', async (req, res) => {
-    const { code } = req.body;  // Получаем vk2 code_v2 от фронта
+    const { code, deviceId } = req.body;
 
-    if (!code) {
-        return res.status(400).json({ error: 'Missing authorization code' });
+    if (!code || !deviceId) {
+        return res.status(400).json({ error: 'Missing code or deviceId' });
     }
 
     try {
-        // 1. Обмен кода на access_token
+        console.log('📥 Received vk2 code and deviceId:', { code, deviceId });
+
+        // 1️⃣ Обмен кода на access_token
         const tokenResponse = await axios.post('https://id.vk.com/oauth2/token', new URLSearchParams({
             grant_type: 'authorization_code',
             client_id: VK_APP_ID,
-            client_secret: VK_SECURE_KEY,
+            client_secret: VK_CLIENT_SECRET,
             redirect_uri: VK_REDIRECT_URI,
-            code: code,
+            code,
+            device_id: deviceId
         }).toString(), {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         });
 
+        console.log('🔑 VK Token Response:', tokenResponse.data);
+
         const { access_token } = tokenResponse.data;
 
         if (!access_token) {
-            throw new Error('Failed to obtain access token from VK');
+            throw new Error('No access token received from VKID');
         }
 
-        console.log('✅ Got VK access token:', access_token);
-
-        // 2. Получаем user_info
+        // 2️⃣ Получаем user_info с этим токеном
         const userInfoResponse = await axios.get('https://id.vk.com/oauth2/user_info', {
             params: { client_id: VK_APP_ID, access_token },
         });
 
-        const user = userInfoResponse.data?.user;
+        console.log('👤 VK User Info Response:', userInfoResponse.data);
 
+        const user = userInfoResponse.data?.user;
         if (!user) {
-            throw new Error('Failed to fetch user info');
+            throw new Error('Failed to fetch user info from VKID');
         }
 
         const vkId = user.user_id;
         const email = user.email || `${vkId}@vk.com`;
         const displayName = `${user.first_name} ${user.last_name}`;
 
-        console.log('👤 VK User:', user);
-
+        // 3️⃣ Создаём/обновляем пользователя в Firestore
         const uid = `vk_${vkId}`;
         await admin.firestore().collection('users').doc(uid).set({
             created: admin.firestore.FieldValue.serverTimestamp(),
@@ -68,14 +76,20 @@ app.post('/auth/vk', async (req, res) => {
             isAdmin: false,
         }, { merge: true });
 
+        // 4️⃣ Генерация кастомного Firebase токена
         const firebaseToken = await admin.auth().createCustomToken(uid);
+
+        // 5️⃣ Возвращаем токен на фронт
         res.json({ firebaseToken });
 
     } catch (error) {
         console.error('❌ VK Auth Error:', error.response?.data || error.message);
-        res.status(500).json({ error: 'Failed to authenticate with VK', details: error.message });
+        res.status(500).json({
+            error: 'Failed to authenticate with VK',
+            details: error.response?.data || error.message,
+        });
     }
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 VKID Auth Backend running on port ${PORT}`));
