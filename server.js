@@ -47,9 +47,8 @@ app.post('/auth/telegram', async (req, res) => {
 
   await admin.firestore().collection('users').doc(uid).set({
     created: admin.firestore.FieldValue.serverTimestamp(),
-    displayName: displayName,
+    nickname: displayName,
     username: user.username ?? '',
-    photoUrl: user.photo_url ?? '',
     isVerified: true,
     isAdmin: false,
     socialLink: `https://t.me/${user.username ?? telegramId}`,
