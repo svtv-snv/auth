@@ -10,75 +10,53 @@ app.use(express.json());
 const serviceAccount = require('./firebase-adminsdk.json');
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 
-const VK_APP_ID = process.env.VK_APP_ID;
-const VK_SECURE_KEY = process.env.VK_SECURE_KEY;
-const VK_REDIRECT_URI = process.env.VK_REDIRECT_URI || 'https://svtv.app/auth/vk';
-
-if (!VK_APP_ID || !VK_SECURE_KEY || !VK_REDIRECT_URI) {
-  console.error('❌ Missing required VK environment variables');
-  process.exit(1);
-}
-
 app.post('/auth/vk', async (req, res) => {
-  const { accessToken } = req.body;  // Получаем access_token от фронта
+  const { accessToken, vkId, firstName, lastName, photo } = req.body;
 
-  if (!accessToken) {
-    return res.status(400).json({ error: 'Missing access token' });
+  if (!accessToken || !vkId || !firstName || !lastName) {
+    return res.status(400).json({ error: 'Missing required fields' });
   }
 
   try {
-    console.log('📥 Received VK accessToken:', accessToken);
+    console.log(`📥 Verifying VK user ${vkId} with token: ${accessToken.substring(0, 8)}...`);
 
-    const response = await axios.get('https://id.vk.com/oauth2/user_info', {
-        params: {
-            client_id: VK_APP_ID,
-            access_token: accessToken,
-        },
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-        },
+    const vkResponse = await axios.get('https://api.vk.com/method/users.get', {
+      params: {
+        user_ids: vkId,
+        access_token: accessToken,
+        v: '5.131',
+        fields: 'email,photo_200'
+      }
     });
 
-    console.log('🌐 Full VK Response:', JSON.stringify(response.data, null, 2));
-
-    if (!response.data || Object.keys(response.data).length === 0) {
-        throw new Error('Empty response from VK ID API');
+    if (!vkResponse.data.response?.length) {
+      throw new Error('Failed to fetch VK user');
     }
 
-    if (response.data.error) {
-        throw new Error(`VK ID API error: ${response.data.error.error_msg || 'Unknown error'}`);
-    }
-
-    const user = response.data.user;
-
-    if (!user) {
-        throw new Error('Missing user data in VK response');
-    }
-
-    const vkId = user.user_id;
-    const email = user.email || `${vkId}@vk.com`;
-    const displayName = `${user.first_name} ${user.last_name}`;
-
-    console.log('🔔 User from VK:', user);
+    const vkUser = vkResponse.data.response[0];
+    console.log('✅ VK user confirmed:', vkUser);
 
     const uid = `vk_${vkId}`;
+    const displayName = `${firstName} ${lastName}`;
+    const email = vkUser.email || `${vkId}@vk.com`;
 
     await admin.firestore().collection('users').doc(uid).set({
-        created: admin.firestore.FieldValue.serverTimestamp(),
-        email,
-        displayName,
-        socialLink: `https://vk.com/id${vkId}`,
-        isVerified: true,
-        isAdmin: false,
+      created: admin.firestore.FieldValue.serverTimestamp(),
+      displayName,
+      email,
+      photoUrl: photo || vkUser.photo_200,
+      socialLink: `https://vk.com/id${vkId}`,
+      isVerified: true,
+      isAdmin: false,
     }, { merge: true });
 
     const firebaseToken = await admin.auth().createCustomToken(uid);
     res.json({ firebaseToken });
-
-} catch (err) {
+  } catch (err) {
     console.error('❌ VK Auth Error:', err.message);
-    res.status(500).json({ error: 'Failed to authenticate with VK ID', details: err.message });
-}
+    res.status(500).json({ error: 'Failed to authenticate with VK', details: err.message });
+  }
+});
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
