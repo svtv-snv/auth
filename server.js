@@ -1,6 +1,6 @@
 const express = require('express');
-const admin = require('firebase-admin');
 const axios = require('axios');
+const admin = require('firebase-admin');
 const cors = require('cors');
 
 const app = express();
@@ -10,52 +10,71 @@ app.use(express.json());
 const serviceAccount = require('./firebase-adminsdk.json');
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 
+const VK_APP_ID = '53184888';
+const VK_SECURE_KEY = process.env.VK_SECURE_KEY; // засунь в env
+const VK_REDIRECT_URI = 'https://svtv.app/auth/vk';
+
 app.post('/auth/vk', async (req, res) => {
-  const { accessToken, vkId, firstName, lastName, photo } = req.body;
+    const { code } = req.body;  // Получаем vk2 code_v2 от фронта
 
-  if (!accessToken || !vkId || !firstName || !lastName) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
-
-  try {
-    console.log(`📥 Verifying VK user ${vkId} with token: ${accessToken.substring(0, 8)}...`);
-
-    const vkResponse = await axios.get('https://api.vk.com/method/users.get', {
-      params: {
-        user_ids: vkId,
-        access_token: accessToken,
-        v: '5.131',
-        fields: 'email,photo_200'
-      }
-    });
-
-    if (!vkResponse.data.response?.length) {
-      throw new Error('Failed to fetch VK user');
+    if (!code) {
+        return res.status(400).json({ error: 'Missing authorization code' });
     }
 
-    const vkUser = vkResponse.data.response[0];
-    console.log('✅ VK user confirmed:', vkUser);
+    try {
+        // 1. Обмен кода на access_token
+        const tokenResponse = await axios.post('https://id.vk.com/oauth2/token', new URLSearchParams({
+            grant_type: 'authorization_code',
+            client_id: VK_APP_ID,
+            client_secret: VK_SECURE_KEY,
+            redirect_uri: VK_REDIRECT_URI,
+            code: code,
+        }).toString(), {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        });
 
-    const uid = `vk_${vkId}`;
-    const displayName = `${firstName} ${lastName}`;
-    const email = vkUser.email || `${vkId}@vk.com`;
+        const { access_token } = tokenResponse.data;
 
-    await admin.firestore().collection('users').doc(uid).set({
-      created: admin.firestore.FieldValue.serverTimestamp(),
-      displayName,
-      email,
-      photoUrl: photo || vkUser.photo_200,
-      socialLink: `https://vk.com/id${vkId}`,
-      isVerified: true,
-      isAdmin: false,
-    }, { merge: true });
+        if (!access_token) {
+            throw new Error('Failed to obtain access token from VK');
+        }
 
-    const firebaseToken = await admin.auth().createCustomToken(uid);
-    res.json({ firebaseToken });
-  } catch (err) {
-    console.error('❌ VK Auth Error:', err.message);
-    res.status(500).json({ error: 'Failed to authenticate with VK', details: err.message });
-  }
+        console.log('✅ Got VK access token:', access_token);
+
+        // 2. Получаем user_info
+        const userInfoResponse = await axios.get('https://id.vk.com/oauth2/user_info', {
+            params: { client_id: VK_APP_ID, access_token },
+        });
+
+        const user = userInfoResponse.data?.user;
+
+        if (!user) {
+            throw new Error('Failed to fetch user info');
+        }
+
+        const vkId = user.user_id;
+        const email = user.email || `${vkId}@vk.com`;
+        const displayName = `${user.first_name} ${user.last_name}`;
+
+        console.log('👤 VK User:', user);
+
+        const uid = `vk_${vkId}`;
+        await admin.firestore().collection('users').doc(uid).set({
+            created: admin.firestore.FieldValue.serverTimestamp(),
+            email,
+            displayName,
+            socialLink: `https://vk.com/id${vkId}`,
+            isVerified: true,
+            isAdmin: false,
+        }, { merge: true });
+
+        const firebaseToken = await admin.auth().createCustomToken(uid);
+        res.json({ firebaseToken });
+
+    } catch (error) {
+        console.error('❌ VK Auth Error:', error.response?.data || error.message);
+        res.status(500).json({ error: 'Failed to authenticate with VK', details: error.message });
+    }
 });
 
 const PORT = process.env.PORT || 5000;
