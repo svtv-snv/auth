@@ -20,23 +20,22 @@ if (!VK_APP_ID || !VK_SECURE_KEY || !VK_REDIRECT_URI) {
 }
 
 app.post('/auth/vk', async (req, res) => {
-  const { accessToken } = req.body;
+  const { accessToken } = req.body;  // Теперь accessToken приходит от фронта
 
   if (!accessToken) {
     return res.status(400).json({ error: 'Missing access token' });
   }
 
   try {
-    // Лог входящих данных
     console.log('📥 Received VK accessToken:', accessToken);
 
-    // Используем Firebase для проверки id_token (или access_token)
-    const decodedToken = await admin.auth().verifyIdToken(accessToken);
+    // Валидация accessToken через Firebase
+    const decodedToken = await admin.auth().verifyIdToken(accessToken);  // Проверка access_token
     const uid = decodedToken.uid;
 
     console.log('🔔 Decoded VK Token Payload:', decodedToken);
 
-    // Сохраняем в Firestore
+    // Сохраняем данные в Firestore
     const userDoc = admin.firestore().collection('users').doc(uid);
     await userDoc.set({
       created: admin.firestore.FieldValue.serverTimestamp(),
@@ -53,10 +52,10 @@ app.post('/auth/vk', async (req, res) => {
     res.json({ firebaseToken });
 
   } catch (err) {
-    console.error('❌ VK Auth Error:', err.response?.data || err.message);
+    console.error('❌ VK Auth Error:', err);
     res.status(500).json({
       error: 'Failed to authenticate with VK ID',
-      details: err.response?.data || err.message,
+      details: err.message,
     });
   }
 });
