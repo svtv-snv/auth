@@ -30,10 +30,10 @@ app.post('/auth/vk', async (req, res) => {
     // Exchange code for tokens
     const tokenResponse = await axios.post('https://oauth.vk.com/access_token', new URLSearchParams({
       grant_type: 'authorization_code',
-      code,
       client_id: VK_APP_ID,
       client_secret: VK_SECURE_KEY,
       redirect_uri: VK_REDIRECT_URI,
+      code: code,
     }).toString(), {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     });
