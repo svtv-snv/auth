@@ -30,7 +30,7 @@ app.post('/auth/vk', async (req, res) => {
     console.log('📥 Received VK accessToken:', accessToken);
 
     // 1. Запрос к VK ID API для получения информации о пользователе
-    const response = await axios.post('https://id.vk.com/oauth2/user_info', null, {
+    const response = await axios.get('https://id.vk.com/oauth2/user_info', {
       params: {
         client_id: VK_APP_ID, // Идентификатор приложения
         access_token: accessToken, // Получаем access_token
