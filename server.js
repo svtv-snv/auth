@@ -29,56 +29,56 @@ app.post('/auth/vk', async (req, res) => {
   try {
     console.log('📥 Received VK accessToken:', accessToken);
 
-    // 1. Запрос к VK ID API для получения информации о пользователе
     const response = await axios.get('https://id.vk.com/oauth2/user_info', {
-      params: {
-        client_id: VK_APP_ID, // Идентификатор приложения
-        access_token: accessToken, // Получаем access_token
-      },
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
+        params: {
+            client_id: VK_APP_ID,
+            access_token: accessToken,
+        },
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
     });
 
-    if (response.data.error) {
-      throw new Error(`VK ID API error: ${response.data.error.error_msg}`);
+    console.log('🌐 Full VK Response:', JSON.stringify(response.data, null, 2));
+
+    if (!response.data || Object.keys(response.data).length === 0) {
+        throw new Error('Empty response from VK ID API');
     }
 
-    const user = response.data.user; // Получаем данные о пользователе
-    const vkId = user.user_id;  // ID пользователя из VK ID
-    const email = user.email || `${vkId}@vk.com`;  // Если email не пришел, создаем его
-    const displayName = `${user.first_name} ${user.last_name}`;  // Имя пользователя
+    if (response.data.error) {
+        throw new Error(`VK ID API error: ${response.data.error.error_msg || 'Unknown error'}`);
+    }
+
+    const user = response.data.user;
+
+    if (!user) {
+        throw new Error('Missing user data in VK response');
+    }
+
+    const vkId = user.user_id;
+    const email = user.email || `${vkId}@vk.com`;
+    const displayName = `${user.first_name} ${user.last_name}`;
 
     console.log('🔔 User from VK:', user);
 
-    // 2. Создание кастомного UID в Firebase с использованием ID пользователя VK
-    const uid = `vk_${vkId}`;  // UID для Firebase на основе ID пользователя VK
+    const uid = `vk_${vkId}`;
 
-    // Сохраняем пользователя в Firestore
-    const userDoc = admin.firestore().collection('users').doc(uid);
-    await userDoc.set({
-      created: admin.firestore.FieldValue.serverTimestamp(),
-      email: email,
-      displayName: displayName,
-      socialLink: `https://vk.com/id${vkId}`,
-      isVerified: true,
-      isAdmin: false,
+    await admin.firestore().collection('users').doc(uid).set({
+        created: admin.firestore.FieldValue.serverTimestamp(),
+        email,
+        displayName,
+        socialLink: `https://vk.com/id${vkId}`,
+        isVerified: true,
+        isAdmin: false,
     }, { merge: true });
 
-    // Генерация кастомного токена Firebase
-    const firebaseToken = await admin.auth().createCustomToken(uid);  // Генерация кастомного токена
-
-    // Отправляем токен на фронт
+    const firebaseToken = await admin.auth().createCustomToken(uid);
     res.json({ firebaseToken });
 
-  } catch (err) {
-    console.error('❌ VK Auth Error:', err);
-    res.status(500).json({
-      error: 'Failed to authenticate with VK ID',
-      details: err.message,
-    });
-  }
-});
+} catch (err) {
+    console.error('❌ VK Auth Error:', err.message);
+    res.status(500).json({ error: 'Failed to authenticate with VK ID', details: err.message });
+}
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
