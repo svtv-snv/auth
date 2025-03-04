@@ -27,7 +27,6 @@ app.post("/auth/vk", async (req, res) => {
     try {
         console.log("📥 Received VKID code:", code);
 
-        // Exchange code for tokens (official OpenID endpoint)
         const tokenResponse = await axios.post('https://id.vk.com/oauth2/token', new URLSearchParams({
             grant_type: 'authorization_code',
             client_id: VK_APP_ID,
@@ -40,12 +39,12 @@ app.post("/auth/vk", async (req, res) => {
 
         console.log("✅ VK Token Response:", tokenResponse.data);
 
-        const { id_token, access_token } = tokenResponse.data;
+        const { id_token } = tokenResponse.data;
+
         if (!id_token) {
             throw new Error("No id_token returned from VK");
         }
 
-        // Decode id_token (it's a JWT)
         const payload = JSON.parse(Buffer.from(id_token.split('.')[1], 'base64').toString('utf-8'));
 
         const vkId = payload.sub;
@@ -53,6 +52,7 @@ app.post("/auth/vk", async (req, res) => {
         const nickname = `${payload.given_name ?? 'Unknown'} ${payload.family_name ?? ''}`.trim();
 
         const uid = `vk_${vkId}`;
+        const userDoc = admin.firestore().collection("users").doc(uid);
 
         const userData = {
             created: admin.firestore.FieldValue.serverTimestamp(),
@@ -62,10 +62,8 @@ app.post("/auth/vk", async (req, res) => {
             isVerified: true,
         };
 
-        const userDoc = admin.firestore().collection("users").doc(uid);
         await userDoc.set(userData, { merge: true });
 
-        // Create Firebase custom token
         const firebaseToken = await admin.auth().createCustomToken(uid, {
             email: userData.email,
             displayName: userData.nickname,
@@ -80,4 +78,5 @@ app.post("/auth/vk", async (req, res) => {
     }
 });
 
-app.listen(5000, () => console.log("🚀 VKID Auth Backend running on port 5000"));
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`🚀 VKID Auth Backend running on port ${PORT}`));
