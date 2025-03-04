@@ -52,7 +52,7 @@ app.post("/auth/vk", async (req, res) => {
             code: code
         });
 
-        const tokenResponse = await axios.post('https://id.vk.com/api/token', new URLSearchParams({
+        const tokenResponse = await axios.post('https://id.vk.com/oauth2/token', new URLSearchParams({
             grant_type: 'authorization_code',
             client_id: VK_APP_ID,
             client_secret: VK_CLIENT_SECRET,
