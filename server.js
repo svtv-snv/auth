@@ -1,75 +1,72 @@
 const express = require("express");
+const cors = require("cors");
 const admin = require("firebase-admin");
 const axios = require("axios");
-const cors = require("cors");
-require("dotenv").config();
+const jwt = require("jsonwebtoken");
 
-// Initialize Express app
 const app = express();
+app.use(cors({ origin: '*' }));
 app.use(express.json());
-app.use(cors());
 
-// Initialize Firebase Admin SDK
+// Initialize Firebase Admin (replace with your service account file)
 const serviceAccount = require("./firebase-adminsdk.json");
+
 admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
 });
 
-// Environment variables
-const VK_APP_ID = process.env.VK_APP_ID;
-const VK_SECURE_KEY = process.env.VK_SECURE_KEY;
-const REDIRECT_URI = process.env.VK_REDIRECT_URI;
+// Cache for VK public keys
+let vkPublicKeys = null;
 
-if (!VK_APP_ID || !VK_SECURE_KEY || !REDIRECT_URI) {
-    console.error("Missing VK_APP_ID, VK_SECURE_KEY, or VK_REDIRECT_URI");
-    process.exit(1);
+// Fetch VK's OpenID Connect public keys (JWKS)
+async function getVKPublicKeys() {
+    if (vkPublicKeys) return vkPublicKeys;
+
+    const openidConfigUrl = "https://id.vk.com/.well-known/openid-configuration";
+    const { data: openidConfig } = await axios.get(openidConfigUrl);
+    const { data: jwks } = await axios.get(openidConfig.jwks_uri);
+
+    vkPublicKeys = jwks.keys.reduce((map, key) => {
+        map[key.kid] = key;
+        return map;
+    }, {});
+
+    return vkPublicKeys;
 }
 
-// Define the /auth/vk route
+// Verify the id_token with VK's public keys
+async function verifyIdToken(idToken) {
+    const header = JSON.parse(Buffer.from(idToken.split('.')[0], 'base64').toString('utf8'));
+    const keys = await getVKPublicKeys();
+
+    const key = keys[header.kid];
+    if (!key) throw new Error("No matching key found for VKID token");
+
+    const publicKey = `-----BEGIN CERTIFICATE-----\n${key.x5c[0]}\n-----END CERTIFICATE-----`;
+
+    return jwt.verify(idToken, publicKey, { algorithms: ['RS256'], issuer: "https://id.vk.com" });
+}
+
+// Main VK Auth handler
 app.post("/auth/vk", async (req, res) => {
-    const { code } = req.body;
+    const { id_token } = req.body;
+
+    if (!id_token) {
+        return res.status(400).json({ error: "Missing id_token" });
+    }
 
     try {
-        console.log(`📥 VKID code received: ${code}`);
+        const payload = await verifyIdToken(id_token);
+        console.log("✅ Verified VKID token payload:", payload);
 
-        // Exchange code for token
-        const tokenResponse = await axios.post('https://id.vk.com/api/token', new URLSearchParams({
-            grant_type: 'authorization_code',
-            code,
-            client_id: VK_APP_ID,
-            client_secret: VK_SECURE_KEY,
-            redirect_uri: REDIRECT_URI,
-        }).toString(), {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-        });
-
-        console.log("🔔 VKID token response:", tokenResponse.data);
-
-        const { access_token, id_token } = tokenResponse.data;
-
-        if (!access_token || !id_token) {
-            return res.status(400).json({ error: "Failed to exchange code for token." });
-        }
-
-        // Decode ID token (it's a JWT, but we can parse the payload)
-        const idTokenParts = id_token.split('.');
-        const payload = JSON.parse(Buffer.from(idTokenParts[1], 'base64').toString('utf-8'));
-
-        const vkId = payload.sub;
-
-        if (!vkId) {
-            return res.status(400).json({ error: "Missing VKID user ID in token." });
-        }
-
-        // Save user to Firestore
-        const uid = `vk_${vkId}`;
+        const uid = `vk_${payload.sub}`;
         const userDoc = admin.firestore().collection("users").doc(uid);
 
         const userData = {
             created: admin.firestore.FieldValue.serverTimestamp(),
-            email: payload.email || `VK${vkId}@vk.com`,
+            email: payload.email || `VK${payload.sub}@vk.com`,
             nickname: `${payload.given_name ?? ''} ${payload.family_name ?? ''}`.trim(),
-            socialLink: `https://vk.com/id${vkId}`,
+            socialLink: `https://vk.com/id${payload.sub}`,
             isVerified: true,
             isAdmin: false,
         };
@@ -81,7 +78,6 @@ app.post("/auth/vk", async (req, res) => {
             await userDoc.update(userData);
         }
 
-        // Create Firebase token
         const firebaseToken = await admin.auth().createCustomToken(uid, {
             email: userData.email,
             displayName: userData.nickname,
@@ -91,11 +87,18 @@ app.post("/auth/vk", async (req, res) => {
 
         return res.json({ firebaseToken });
     } catch (error) {
-        console.error("❌ VKID token exchange failed:", error.response?.data || error.message);
-        return res.status(500).json({ error: "Failed to authenticate with VKID" });
+        console.error("❌ Failed to verify VKID token:", error.message);
+        res.status(400).json({ error: "Invalid id_token" });
     }
 });
 
-// Start the server
+// Simple health check
+app.get("/health", (req, res) => {
+    res.send("VKID Auth Backend is running");
+});
+
+// Start server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 VKID Auth Backend running on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`🚀 VKID Auth Backend running on port ${PORT}`);
+});
