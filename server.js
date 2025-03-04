@@ -8,11 +8,14 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Initialize Firebase Admin SDK
 const serviceAccount = require('./firebase-adminsdk.json');
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 
+// Cache for VK public keys
 let vkPublicKeys = null;
 
+// Fetch VK public keys for JWT verification
 async function getVKPublicKeys() {
     if (vkPublicKeys) return vkPublicKeys;
 
@@ -25,6 +28,7 @@ async function getVKPublicKeys() {
     return vkPublicKeys;
 }
 
+// Verify the VK ID token
 async function verifyIdToken(idToken) {
     const header = JSON.parse(Buffer.from(idToken.split('.')[0], 'base64').toString());
     const keys = await getVKPublicKeys();
@@ -34,29 +38,43 @@ async function verifyIdToken(idToken) {
     return jwt.verify(idToken, cert, { algorithms: ['RS256'], issuer: 'https://id.vk.com' });
 }
 
+// VK ID authentication endpoint
 app.post('/auth/vk', async (req, res) => {
     const { id_token } = req.body;
-    if (!id_token) return res.status(400).send({ error: 'Missing id_token' });
+    console.log('📥 Received id_token:', id_token);
+
+    if (!id_token) {
+        console.error('❌ Missing id_token');
+        return res.status(400).send({ error: 'Missing id_token' });
+    }
 
     try {
+        // Verify the ID token
         const payload = await verifyIdToken(id_token);
+        console.log('🔔 Decoded payload:', payload);
+
         const vkId = payload.sub;
         const uid = `vk_${vkId}`;
 
+        // Save user to Firestore
         const userDoc = admin.firestore().collection('users').doc(uid);
         await userDoc.set({
             created: admin.firestore.FieldValue.serverTimestamp(),
-            email: payload.email,
-            nickname: `${payload.given_name} ${payload.family_name}`.trim(),
+            email: payload.email || `vk_${vkId}@vk.com`,
+            nickname: `${payload.given_name || ''} ${payload.family_name || ''}`.trim(),
             socialLink: `https://vk.com/id${vkId}`,
             isVerified: true,
         }, { merge: true });
 
+        // Create Firebase custom token
         const firebaseToken = await admin.auth().createCustomToken(uid, { provider: 'vk' });
         res.json({ firebaseToken });
     } catch (err) {
+        console.error('❌ Error verifying id_token:', err.message);
         res.status(400).send({ error: 'Invalid token', details: err.message });
     }
 });
 
-app.listen(5000, () => console.log('VKID Auth Backend running'));
+// Start the server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`🚀 VKID Auth Backend running on port ${PORT}`));
