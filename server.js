@@ -28,7 +28,7 @@ app.post('/auth/vk', async (req, res) => {
       grant_type: 'authorization_code',
       client_id: VK_APP_ID,
       client_secret: VK_SECURE_KEY,
-      redirect_uri: VK_REDIRECT_URI,
+      redirect_uri: 'https://svtv.app/auth/vk',
       code: code,
     });
 
