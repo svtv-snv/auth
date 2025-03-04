@@ -1,42 +1,22 @@
-const express = require("express");
-const admin = require("firebase-admin");
-const axios = require("axios");
-const cors = require("cors");
-require("dotenv").config();
-
-const app = express();
-app.use(express.json());
-app.use(cors());
-
-const serviceAccount = require("./firebase-adminsdk.json");
-admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-});
-
-const VK_APP_ID = process.env.VK_APP_ID;
-const VK_SECURE_KEY = process.env.VK_SECURE_KEY;  // Make sure it's in .env
-const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID;  // Needed for token issuer
-const REDIRECT_URI = process.env.VK_REDIRECT_URI;  // Same as in VK ID dashboard
-
-if (!VK_APP_ID || !VK_SECURE_KEY || !REDIRECT_URI) {
-    console.error("Missing VK_APP_ID, VK_SECURE_KEY, or VK_REDIRECT_URI");
-    process.exit(1);
-}
-
 app.post("/auth/vk", async (req, res) => {
     const { code } = req.body;
 
     try {
         console.log(`📥 VKID code received: ${code}`);
 
-        // Exchange code for token
-        const tokenResponse = await axios.post('https://id.vk.com/api/token', new URLSearchParams({
+        // Log the request parameters
+        const params = new URLSearchParams({
             grant_type: 'authorization_code',
             code,
             client_id: VK_APP_ID,
             client_secret: VK_SECURE_KEY,
             redirect_uri: REDIRECT_URI,
-        }).toString(), {
+        }).toString();
+
+        console.log("Requesting VK token with params:", params);
+
+        // Exchange code for token
+        const tokenResponse = await axios.post('https://id.vk.com/api/token', params, {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         });
 
@@ -92,6 +72,3 @@ app.post("/auth/vk", async (req, res) => {
         return res.status(500).json({ error: "Failed to authenticate with VKID" });
     }
 });
-
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 VKID Auth Backend running on port ${PORT}`));
