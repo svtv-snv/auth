@@ -45,7 +45,6 @@ app.post('/auth/vk', async (req, res) => {
 
         console.log('🔑 VK Access Token получен:', access_token);
 
-        // Получаем инфу о пользователе
         const userInfoResponse = await axios.get('https://api.vk.com/method/users.get', {
             params: {
                 user_ids: user_id,
@@ -61,18 +60,36 @@ app.post('/auth/vk', async (req, res) => {
         const uid = `vk_${user_id}`;
         const displayName = `${vkUser.first_name} ${vkUser.last_name}`;
         const socialLink = `https://vk.com/id${user_id}`;
+        const userEmail = email ?? `${user_id}@vk.com`;
 
+        // Заполняем Firestore
         await admin.firestore().collection('users').doc(uid).set({
             created: admin.firestore.FieldValue.serverTimestamp(),
-            email: email ?? `${user_id}@vk.com`,
+            email: userEmail,
             nickname: displayName,
             socialLink: socialLink,
             isVerified: true,
             isAdmin: false,
         }, { merge: true });
 
+        // Обновляем профиль в Firebase Auth
+        try {
+            await admin.auth().updateUser(uid, {
+                displayName: displayName,
+                email: userEmail,
+            });
+        } catch (err) {
+            if (err.code === 'auth/user-not-found') {
+                // Если пользователя еще нет, это нормально при первом входе — просто создаем кастомный токен
+                console.log('ℹ️ Firebase Auth user не найден, создаем нового');
+            } else {
+                console.error('❌ Ошибка при обновлении Firebase Auth профиля:', err.message);
+            }
+        }
+
         const firebaseToken = await admin.auth().createCustomToken(uid);
         res.json({ firebaseToken });
+
     } catch (error) {
         console.error('❌ Ошибка при авторизации VK:', error.response?.data || error.message);
         res.status(500).json({
