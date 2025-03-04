@@ -29,21 +29,23 @@ app.post('/auth/vk', async (req, res) => {
   try {
     console.log('📥 Received VK accessToken:', accessToken);
 
-    // 1. Проверка access_token через VK API для получения информации о пользователе
-    const response = await axios.get('https://api.vk.com/method/users.get', {
+    // 1. Запрос к VK ID API для получения информации о пользователе
+    const response = await axios.post('https://id.vk.com/oauth2/user_info', null, {
       params: {
-        access_token: accessToken,
-        v: '5.131',  // Используем актуальную версию VK API
-        fields: 'id,email,first_name,last_name',  // Запрашиваем ID и другие данные
+        client_id: VK_APP_ID, // Идентификатор приложения
+        access_token: accessToken, // Получаем access_token
+      },
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
       },
     });
 
     if (response.data.error) {
-      throw new Error(`VK API error: ${response.data.error.error_msg}`);
+      throw new Error(`VK ID API error: ${response.data.error.error_msg}`);
     }
 
-    const user = response.data.response[0]; // Получаем данные о пользователе
-    const vkId = user.id;  // Используем ID пользователя из VK
+    const user = response.data.user; // Получаем данные о пользователе
+    const vkId = user.user_id;  // ID пользователя из VK ID
     const email = user.email || `${vkId}@vk.com`;  // Если email не пришел, создаем его
     const displayName = `${user.first_name} ${user.last_name}`;  // Имя пользователя
 
