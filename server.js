@@ -13,7 +13,12 @@ admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 
 const VK_APP_ID = process.env.VK_APP_ID;
 const VK_SECURE_KEY = process.env.VK_SECURE_KEY;
-const VK_REDIRECT_URI = process.env.VK_REDIRECT_URI;
+const VK_REDIRECT_URI = process.env.VK_REDIRECT_URI || 'https://svtv.app/auth/vk';
+
+if (!VK_APP_ID || !VK_SECURE_KEY || !VK_REDIRECT_URI) {
+  console.error('❌ Missing required VK environment variables');
+  process.exit(1);
+}
 
 app.post('/auth/vk', async (req, res) => {
   const { code } = req.body;
@@ -23,18 +28,32 @@ app.post('/auth/vk', async (req, res) => {
   }
 
   try {
-    // Обмен кода на токен
+    // Лог входящих данных
+    console.log('📥 Received VK code:', code);
+
+    // Лог параметров перед запросом
     const params = new URLSearchParams({
       grant_type: 'authorization_code',
       client_id: VK_APP_ID,
       client_secret: VK_SECURE_KEY,
-      redirect_uri: 'https://svtv.app/auth/vk',
+      redirect_uri: VK_REDIRECT_URI,
       code: code,
     });
 
+    console.log('🔍 VK Exchange Params:', {
+      grant_type: 'authorization_code',
+      client_id: VK_APP_ID,
+      client_secret: '***',  // Не логируем секрет в проде
+      redirect_uri: VK_REDIRECT_URI,
+      code,
+    });
+
+    // Обмен кода на токен
     const tokenResponse = await axios.post('https://oauth.vk.com/access_token', params.toString(), {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
+
+    console.log('✅ VK Token Response:', tokenResponse.data);
 
     const { access_token, id_token, user_id } = tokenResponse.data;
 
@@ -49,7 +68,7 @@ app.post('/auth/vk', async (req, res) => {
       return res.status(400).json({ error: 'Invalid ID Token' });
     }
 
-    console.log('🔔 Decoded payload:', payload);
+    console.log('🔔 Decoded VK ID Token Payload:', payload);
 
     const vkId = payload.sub;
     const uid = `vk_${vkId}`;
@@ -72,7 +91,15 @@ app.post('/auth/vk', async (req, res) => {
 
   } catch (err) {
     console.error('❌ VK Auth Error:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Failed to authenticate with VK ID' });
+
+    if (err.response) {
+      console.error('📥 VK Error Response:', err.response.data);
+    }
+
+    res.status(500).json({
+      error: 'Failed to authenticate with VK ID',
+      details: err.response?.data || err.message,
+    });
   }
 });
 
