@@ -28,7 +28,7 @@ app.post('/auth/vk', async (req, res) => {
 
   try {
     // Exchange code for tokens
-    const tokenResponse = await axios.post('https://id.vk.com/access_token', new URLSearchParams({
+    const tokenResponse = await axios.post('https://oauth.vk.com/access_token', new URLSearchParams({
       grant_type: 'authorization_code',
       code,
       client_id: VK_APP_ID,
