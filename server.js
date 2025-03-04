@@ -40,39 +40,59 @@ async function verifyIdToken(idToken) {
 
 // VK ID authentication endpoint
 app.post('/auth/vk', async (req, res) => {
-    const { id_token } = req.body;
-    console.log('📥 Received id_token:', id_token);
+  const { code } = req.body;
+  console.log('📥 Received code:', code);
 
-    if (!id_token) {
-        console.error('❌ Missing id_token');
-        return res.status(400).send({ error: 'Missing id_token' });
+  if (!code) {
+    console.error('❌ Missing code');
+    return res.status(400).send({ error: 'Missing code' });
+  }
+
+  try {
+    // Exchange the code for an id_token and access_token
+    const tokenResponse = await axios.post('https://id.vk.com/access_token', new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      client_id: process.env.VK_APP_ID,
+      client_secret: process.env.VK_SECURE_KEY,
+      redirect_uri: process.env.VK_REDIRECT_URI,
+    }).toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    });
+
+    console.log('🔔 VK token response:', tokenResponse.data);
+
+    const { access_token, id_token } = tokenResponse.data;
+
+    if (!access_token || !id_token) {
+      console.error('❌ Failed to exchange code for tokens');
+      return res.status(400).send({ error: 'Failed to exchange code for tokens' });
     }
 
-    try {
-        // Verify the ID token
-        const payload = await verifyIdToken(id_token);
-        console.log('🔔 Decoded payload:', payload);
+    // Verify the ID token
+    const payload = await verifyIdToken(id_token);
+    console.log('🔔 Decoded payload:', payload);
 
-        const vkId = payload.sub;
-        const uid = `vk_${vkId}`;
+    const vkId = payload.sub;
+    const uid = `vk_${vkId}`;
 
-        // Save user to Firestore
-        const userDoc = admin.firestore().collection('users').doc(uid);
-        await userDoc.set({
-            created: admin.firestore.FieldValue.serverTimestamp(),
-            email: payload.email || `vk_${vkId}@vk.com`,
-            nickname: `${payload.given_name || ''} ${payload.family_name || ''}`.trim(),
-            socialLink: `https://vk.com/id${vkId}`,
-            isVerified: true,
-        }, { merge: true });
+    // Save user to Firestore
+    const userDoc = admin.firestore().collection('users').doc(uid);
+    await userDoc.set({
+      created: admin.firestore.FieldValue.serverTimestamp(),
+      email: payload.email || `vk_${vkId}@vk.com`,
+      nickname: `${payload.given_name || ''} ${payload.family_name || ''}`.trim(),
+      socialLink: `https://vk.com/id${vkId}`,
+      isVerified: true,
+    }, { merge: true });
 
-        // Create Firebase custom token
-        const firebaseToken = await admin.auth().createCustomToken(uid, { provider: 'vk' });
-        res.json({ firebaseToken });
-    } catch (err) {
-        console.error('❌ Error verifying id_token:', err.message);
-        res.status(400).send({ error: 'Invalid token', details: err.message });
-    }
+    // Create Firebase custom token
+    const firebaseToken = await admin.auth().createCustomToken(uid, { provider: 'vk' });
+    res.json({ firebaseToken });
+  } catch (err) {
+    console.error('❌ Error exchanging code or verifying id_token:', err.message);
+    res.status(400).send({ error: 'Failed to authenticate with VKID', details: err.message });
+  }
 });
 
 // Start the server
