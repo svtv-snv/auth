@@ -25,6 +25,7 @@ app.post("/auth/vk", async (req, res) => {
     }
 
     try {
+        // Exchange code for id_token using the correct VKID endpoint
         const tokenResponse = await axios.post('https://id.vk.com/api/token', new URLSearchParams({
             grant_type: 'authorization_code',
             client_id: VK_APP_ID,
@@ -42,7 +43,7 @@ app.post("/auth/vk", async (req, res) => {
             throw new Error("No id_token returned from VK");
         }
 
-        // Decode id_token and extract useful data
+        // Decode the id_token to get user info
         const payload = JSON.parse(Buffer.from(id_token.split('.')[1], 'base64').toString('utf-8'));
 
         const vkId = payload.sub;
