@@ -49,7 +49,7 @@ app.post('/auth/vk', async (req, res) => {
         const userInfoResponse = await axios.get('https://api.vk.com/method/users.get', {
             params: {
                 user_ids: user_id,
-                fields: 'photo_max,first_name,last_name',
+                fields: 'first_name,last_name',
                 access_token: access_token,
                 v: '5.131',
             },
@@ -65,9 +65,8 @@ app.post('/auth/vk', async (req, res) => {
         await admin.firestore().collection('users').doc(uid).set({
             created: admin.firestore.FieldValue.serverTimestamp(),
             email: email ?? `${user_id}@vk.com`,
-            displayName,
-            photoURL: vkUser.photo_max,
-            socialLink,
+            nickname: displayName,
+            socialLink: socialLink,
             isVerified: true,
             isAdmin: false,
         }, { merge: true });
