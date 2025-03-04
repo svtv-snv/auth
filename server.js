@@ -1,15 +1,14 @@
 const express = require("express");
 const admin = require("firebase-admin");
 const axios = require("axios");
+const jwt = require("jsonwebtoken");
 const cors = require("cors");
-const { verify } = require("jsonwebtoken");  // You will need to fetch and cache VK's public keys
-
-require("dotenv").config();
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
+// Initialize Firebase Admin
 const serviceAccount = require("./firebase-adminsdk.json");
 admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
@@ -17,33 +16,30 @@ admin.initializeApp({
 
 let vkPublicKeys = null;
 
-// Fetch VK's JWKS (public keys for JWT verification)
 async function getVKPublicKeys() {
     if (!vkPublicKeys) {
-        const openidConfig = await axios.get('https://id.vk.com/.well-known/openid-configuration');
-        const jwksUri = openidConfig.data.jwks_uri;
-        const jwksResponse = await axios.get(jwksUri);
-        vkPublicKeys = jwksResponse.data.keys;
+        const { data: openidConfig } = await axios.get("https://id.vk.com/.well-known/openid-configuration");
+        const { data: jwks } = await axios.get(openidConfig.jwks_uri);
+        vkPublicKeys = jwks.keys.reduce((acc, key) => {
+            acc[key.kid] = key;
+            return acc;
+        }, {});
     }
     return vkPublicKeys;
 }
 
-async function verifyVKIDToken(idToken) {
-    const keys = await getVKPublicKeys();
+async function verifyIdToken(idToken) {
     const header = JSON.parse(Buffer.from(idToken.split('.')[0], 'base64').toString('utf8'));
+    const keys = await getVKPublicKeys();
+    const key = keys[header.kid];
 
-    const key = keys.find(k => k.kid === header.kid);
     if (!key) {
-        throw new Error('Invalid VKID token - no matching key');
+        throw new Error("Invalid VKID token - No matching key found");
     }
 
-    const publicKey = `-----BEGIN PUBLIC KEY-----\n${key.x5c[0]}\n-----END PUBLIC KEY-----`;
-    return new Promise((resolve, reject) => {
-        verify(idToken, publicKey, { algorithms: ['RS256'] }, (err, decoded) => {
-            if (err) return reject(err);
-            resolve(decoded);
-        });
-    });
+    const publicKey = `-----BEGIN CERTIFICATE-----\n${key.x5c[0]}\n-----END CERTIFICATE-----`;
+
+    return jwt.verify(idToken, publicKey, { algorithms: ['RS256'], issuer: "https://id.vk.com" });
 }
 
 app.post("/auth/vk", async (req, res) => {
@@ -54,21 +50,16 @@ app.post("/auth/vk", async (req, res) => {
     }
 
     try {
-        const payload = await verifyVKIDToken(id_token);
-        const vkId = payload.sub;
+        const payload = await verifyIdToken(id_token);
 
-        if (!vkId) {
-            return res.status(400).json({ error: "Missing VKID user ID in token." });
-        }
-
-        const uid = `vk_${vkId}`;
+        const uid = `vk_${payload.sub}`;
         const userDoc = admin.firestore().collection("users").doc(uid);
 
         const userData = {
             created: admin.firestore.FieldValue.serverTimestamp(),
-            email: payload.email || `VK${vkId}@vk.com`,
+            email: payload.email || `VK${payload.sub}@vk.com`,
             nickname: `${payload.given_name ?? ''} ${payload.family_name ?? ''}`.trim(),
-            socialLink: `https://vk.com/id${vkId}`,
+            socialLink: `https://vk.com/id${payload.sub}`,
             isVerified: true,
             isAdmin: false,
         };
@@ -91,9 +82,10 @@ app.post("/auth/vk", async (req, res) => {
 
     } catch (error) {
         console.error("❌ Failed to verify VKID token:", error.message);
-        return res.status(500).json({ error: "Failed to verify VKID token" });
+        return res.status(400).json({ error: "Invalid id_token" });
     }
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 VKID Auth Backend running on port ${PORT}`));
+app.listen(5000, () => {
+    console.log("VKID Auth Backend is running on port 5000");
+});
