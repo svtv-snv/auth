@@ -1,7 +1,7 @@
 const express = require('express');
 const admin = require('firebase-admin');
+const axios = require('axios');
 const cors = require('cors');
-const jwt = require('jsonwebtoken');
 
 const app = express();
 app.use(cors());
@@ -20,7 +20,7 @@ if (!VK_APP_ID || !VK_SECURE_KEY || !VK_REDIRECT_URI) {
 }
 
 app.post('/auth/vk', async (req, res) => {
-  const { accessToken } = req.body;  // Теперь accessToken приходит от фронта
+  const { accessToken } = req.body;  // Получаем access_token от фронта
 
   if (!accessToken) {
     return res.status(400).json({ error: 'Missing access token' });
@@ -29,26 +29,44 @@ app.post('/auth/vk', async (req, res) => {
   try {
     console.log('📥 Received VK accessToken:', accessToken);
 
-    // Валидация accessToken через Firebase
-    const decodedToken = await admin.auth().verifyIdToken(accessToken);  // Проверка access_token
-    const uid = decodedToken.uid;
+    // 1. Проверка access_token через VK API для получения информации о пользователе
+    const response = await axios.get('https://api.vk.com/method/users.get', {
+      params: {
+        access_token: accessToken,
+        v: '5.131',  // Используем актуальную версию VK API
+        fields: 'id,email,first_name,last_name',  // Запрашиваем ID и другие данные
+      },
+    });
 
-    console.log('🔔 Decoded VK Token Payload:', decodedToken);
+    if (response.data.error) {
+      throw new Error(`VK API error: ${response.data.error.error_msg}`);
+    }
 
-    // Сохраняем данные в Firestore
+    const user = response.data.response[0]; // Получаем данные о пользователе
+    const vkId = user.id;  // Используем ID пользователя из VK
+    const email = user.email || `${vkId}@vk.com`;  // Если email не пришел, создаем его
+    const displayName = `${user.first_name} ${user.last_name}`;  // Имя пользователя
+
+    console.log('🔔 User from VK:', user);
+
+    // 2. Создание кастомного UID в Firebase с использованием ID пользователя VK
+    const uid = `vk_${vkId}`;  // UID для Firebase на основе ID пользователя VK
+
+    // Сохраняем пользователя в Firestore
     const userDoc = admin.firestore().collection('users').doc(uid);
     await userDoc.set({
       created: admin.firestore.FieldValue.serverTimestamp(),
-      email: decodedToken.email || `${uid}@vk.com`,
-      nickname: `${decodedToken.given_name || ''} ${decodedToken.family_name || ''}`.trim(),
-      socialLink: `https://vk.com/id${decodedToken.user_id}`,
+      email: email,
+      displayName: displayName,
+      socialLink: `https://vk.com/id${vkId}`,
       isVerified: true,
       isAdmin: false,
     }, { merge: true });
 
     // Генерация кастомного токена Firebase
-    const firebaseToken = await admin.auth().createCustomToken(uid, { provider: 'vk' });
+    const firebaseToken = await admin.auth().createCustomToken(uid);  // Генерация кастомного токена
 
+    // Отправляем токен на фронт
     res.json({ firebaseToken });
 
   } catch (err) {
