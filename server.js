@@ -72,23 +72,39 @@ app.post('/auth/vk', async (req, res) => {
             isAdmin: false,
         }, { merge: true });
 
-        // Обновляем профиль в Firebase Auth
-        try {
-            await admin.auth().updateUser(uid, {
-                displayName: displayName,
-                email: userEmail,
-            });
-        } catch (err) {
-            if (err.code === 'auth/user-not-found') {
-                // Если пользователя еще нет, это нормально при первом входе — просто создаем кастомный токен
-                console.log('ℹ️ Firebase Auth user не найден, создаем нового');
-            } else {
-                console.error('❌ Ошибка при обновлении Firebase Auth профиля:', err.message);
-            }
-        }
+        // Создаём пользователя в Firebase Auth, если его ещё нет
+try {
+    await admin.auth().getUser(uid);
+    console.log('👤 Пользователь уже существует в Firebase Auth');
+} catch (error) {
+    if (error.code === 'auth/user-not-found') {
+        console.log('🆕 Создаём нового пользователя в Firebase Auth');
+        await admin.auth().createUser({
+            uid,
+            displayName,
+            email: userEmail,
+        });
+    } else {
+        console.error('❌ Ошибка при получении пользователя:', error.message);
+        return res.status(500).json({ error: 'Ошибка при создании пользователя' });
+    }
+}
 
-        const firebaseToken = await admin.auth().createCustomToken(uid);
-        res.json({ firebaseToken });
+// Обновляем профиль (на всякий случай)
+try {
+    await admin.auth().updateUser(uid, {
+        displayName: displayName,
+        email: userEmail,
+    });
+    console.log('✅ Профиль пользователя успешно обновлён');
+} catch (err) {
+    console.error('❌ Ошибка при обновлении Firebase Auth профиля:', err.message);
+    // Не критично, продолжаем
+}
+
+// Создаём кастомный токен
+const firebaseToken = await admin.auth().createCustomToken(uid);
+res.json({ firebaseToken });
 
     } catch (error) {
         console.error('❌ Ошибка при авторизации VK:', error.response?.data || error.message);
