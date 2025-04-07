@@ -38,7 +38,7 @@ app.post('/auth/vk', async (req, res) => {
             },
         });
 
-        const { access_token, user_id, email } = tokenResponse.data;
+        const { access_token, user_id } = tokenResponse.data;
         if (!access_token) {
             throw new Error('Не получили access_token');
         }
@@ -60,7 +60,7 @@ app.post('/auth/vk', async (req, res) => {
         const uid = `vk_${user_id}`;
         const displayName = `${vkUser.first_name} ${vkUser.last_name}`;
         const socialLink = `https://vk.com/id${user_id}`;
-        const userEmail = email ?? `${user_id}@vk.com`;
+        const userEmail = `${user_id}@vk.com`;
 
         // Заполняем Firestore
         await admin.firestore().collection('users').doc(uid).set({
